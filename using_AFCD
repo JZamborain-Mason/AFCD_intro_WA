@@ -1,0 +1,481 @@
+
+
+#AFCD reference key
+?afcd_refs
+
+#AFCD foods ID'ed by any level of taxonomic information
+?afcd
+
+#AFCD foods ID'ed by common food names
+?afcd_common
+
+#AFCD foods ID'ed by scientific names
+?afcd_sci
+
+```
+
+- "afcd_nutrients" returns the type of nutrients available in the database, their units and the total sample sizes.  
+- "afcd_parts" returns the type of aquatic food body parts available along their total sample sizes.
+- "afcd_prep" returns the type of preparation types available in the database, as well as their total sample sizes. Note this section is currently being improved (e.g., making sure food preparations are not being mixed with sample preparations or filling in NAs)  
+- "afcd_refs" returns the studies included in the AFCD and associated metadata.
+- "afcd" returns a clean version of the entire database regardless of taxonomic resolution.
+- "afcd_common" returns entries within AFCD identified by general food names
+- "afcd_sci" returns entries within AFCD that are identified with scientific names
+
+
+Go ahead and assign a name to each of these datasets. Note that I kept the same name but capitalized "AFCD":
+
+```{r}
+#AFCD nutrient key
+AFCD_nutrients<-afcd_nutrients
+
+#AFCD food part key
+AFCD_parts<-afcd_parts
+
+#AFCD preparation type key
+AFCD_prep<-afcd_prep
+
+#AFCD reference key
+AFCD_refs<-afcd_refs
+
+#AFCD foods ID'ed by any level of taxonomic information
+AFCD<-afcd
+
+#AFCD foods ID'ed by common food names
+AFCD_common<-afcd_common
+
+#AFCD foods ID'ed by scientific names
+AFCD_sci<-afcd_sci
+
+```
+
+
+In addition to those, the package also includes a function  called "species_nutrients()". This function still needs improvement, but its intention is to provide nutrient estimates for a given species to the lowest taxonomic level possible. You basically provide the species (or species list). the preparation method (or methods) and body part (or parts) to include, and the nutrient/s you want. 
+
+As an example, I am going to use it with the Atlantic salmon and an iconic species in this region (the western rock lobster). I am going to ask for raw muscle tissue samples of iron and Zinc. However, note you can play around using other nutrients, body parts or preparation types given the information provided above (e.g., AFCD_nutrients, AFCD_parts, or AFCD_prep). Remember to first load the tidyverse package:
+
+
+```{r, message=FALSE, warning=FALSE}
+#load tidyverse package
+library(tidyverse)
+
+#if species nutrient doesnt work, use this instead
+species_nutrients_b = function(sci_name, prep, part, nut){
+  # to test with a mix of easy and hard to find species and nutrients
+  # sci_name=c("Thunnus alalunga","Thunnus obesus","Istiompax indica","Makaira nigricans","Coryphaena hippurus")
+  # prep = "raw"
+  # part = "muscle tissue"
+  # nut=c(
+  #   "Iron, total","Zinc","Iodine",
+  #   "Vitamin A; sum of retinol/carotenoids, expressed as retinol activity equivalent (RAE)",
+  #   "Riboflavin","Selenium","Magnesium","Vitamin B12",
+  #   "Fatty acid 20:5, n3","Fatty acid 22:6, n3",
+  #   "Calcium",
+  #   "Protein, total; calculated from total nitrogen"
+  # )
+  ##Calculate confidence intervals
+  lower_ci <- function(mean, se, n, conf_level = 0.95){
+    lower_ci <- mean - qt(1 - ((1 - conf_level) / 2), n - 1) * se
+  }
+  upper_ci <- function(mean, se, n, conf_level = 0.95){
+    upper_ci <- mean + qt(1 - ((1 - conf_level) / 2), n - 1) * se
+  }
+  
+  ##Taxa_table
+  # This loads as you call it due to lazyLoad, no need to readRDS
+  # taxa_table = readRDS(file=file.path("data-raw/processed/taxa_table.Rds"))
+  
+  ##Load AFCD
+  # again, this loads as you call it due to lazyLoad, no need to readRDS
+  # AFCD = readRDS("data-raw/processed/AFCD_data_taxa.Rds") %>% 
+  AFCD = afcd %>%
+    filter(nutrient %in% nut,
+           food_prep %in% prep,
+           food_part %in% part)
+  
+  nutrient_key = AFCD %>% 
+    distinct(nutrient, .keep_all = T) %>% 
+    select(nutrient, nutrient_units)
+  
+  afcd_species = AFCD %>% 
+    group_by(sciname, nutrient) %>% 
+    mutate(value=as.numeric(value)) %>%
+    dplyr::summarize(smean = mean(value),
+              ssd = sd(value),
+              count = n(),
+              smedian = median(value)) %>% 
+    mutate(se = ssd / sqrt(count),
+           lower_ci = lower_ci(smean, se, count),
+           upper_ci = upper_ci(smean, se, count),
+           lower_ci = if_else(lower_ci<0, 0, lower_ci),
+           upper_ci = if_else(upper_ci<0, 0, upper_ci)) %>% 
+    ungroup() %>% 
+    drop_na(sciname) %>% 
+    mutate(sciname = tolower(sciname)) %>% 
+    rename(value = smedian)
+  
+  #calculate mean values for genus
+  afcd_genus = AFCD %>%
+    group_by(genus, nutrient) %>% 
+    mutate(value=as.numeric(value)) %>%
+    dplyr::summarize(smean = mean(value),
+              ssd = sd(value),
+              count = n(),
+              smedian = median(value)) %>% 
+    mutate(se = ssd / sqrt(count),
+           lower_ci = lower_ci(smean, se, count),
+           upper_ci = upper_ci(smean, se, count),
+           lower_ci = if_else(lower_ci<0, 0, lower_ci),
+           upper_ci = if_else(upper_ci<0, 0, upper_ci)) %>% 
+    ungroup() %>% 
+    drop_na(genus) %>% 
+    mutate(genus = tolower(genus)) %>% 
+    rename(value = smedian)
+  
+  #calculate mean values for family
+  afcd_family = AFCD %>%
+    group_by(family, nutrient) %>% 
+    mutate(value=as.numeric(value)) %>%
+    dplyr::summarize(smean = mean(value),
+              ssd = sd(value),
+              count = n(),
+              smedian = median(value)) %>% 
+    mutate(se = ssd / sqrt(count),
+           lower_ci = lower_ci(smean, se, count),
+           upper_ci = upper_ci(smean, se, count),
+           lower_ci = if_else(lower_ci<0, 0, lower_ci),
+           upper_ci = if_else(upper_ci<0, 0, upper_ci)) %>% 
+    ungroup() %>% 
+    drop_na(family) %>% 
+    mutate(family = tolower(family)) %>% 
+    rename(value = smedian)
+  
+  #calculate mean values for order
+  afcd_order = AFCD %>%
+    group_by(order, nutrient) %>% 
+    mutate(value=as.numeric(value)) %>%
+    dplyr::summarize(smean = mean(value),
+              ssd = sd(value),
+              count = n(),
+              smedian = median(value)) %>% 
+    mutate(se = ssd / sqrt(count),
+           lower_ci = lower_ci(smean, se, count),
+           upper_ci = upper_ci(smean, se, count),
+           lower_ci = if_else(lower_ci<0, 0, lower_ci),
+           upper_ci = if_else(upper_ci<0, 0, upper_ci)) %>% 
+    ungroup() %>% 
+    drop_na(order) %>% 
+    mutate(order = tolower(order)) %>% 
+    rename(value = smedian)
+  
+  #calculate mean values for class
+  afcd_class = AFCD %>%
+    group_by(class, nutrient) %>% 
+    mutate(value=as.numeric(value)) %>%
+    dplyr::summarize(smean = mean(value),
+              ssd = sd(value),
+              count = n(),
+              smedian = median(value)) %>% 
+    mutate(se = ssd / sqrt(count),
+           lower_ci = lower_ci(smean, se, count),
+           upper_ci = upper_ci(smean, se, count),
+           lower_ci = if_else(lower_ci<0, 0, lower_ci),
+           upper_ci = if_else(upper_ci<0, 0, upper_ci)) %>% 
+    ungroup() %>% 
+    drop_na(class) %>% 
+    mutate(class = tolower(class)) %>% 
+    rename(value = smedian)
+  
+  ##Fill taxonomic information for species
+  all_spp = data.frame(species = rep(sci_name, length(nut)),
+                       nutrient = rep(nut, length(sci_name)) %>% sort()) %>%
+    mutate(species = tolower(species)) %>% 
+    separate(species, c("genus", "spp"), " ", remove=FALSE) %>% 
+    left_join(taxa_table, by = c("genus"))
+  
+  #Fill taxa by family
+  missing_family = all_spp %>% 
+    filter(is.na(class)) %>% 
+    select(-order,-phylum,-kingdom,-class) %>% 
+    left_join(taxa_table %>% select(-genus) %>% distinct(family, .keep_all=T), by = c("genus" = "family"))
+  
+  all_spp = all_spp %>% 
+    filter(!is.na(class)) %>% 
+    rbind(missing_family)
+  
+  #Fill taxa by order
+  missing_order = all_spp %>% 
+    filter(is.na(class)) %>% 
+    select(-class,-phylum,-kingdom) %>% 
+    left_join(taxa_table %>% select(-genus, -family) %>% distinct(order, .keep_all=T), by = c("genus" = "order"))
+  
+  all_spp = all_spp %>% 
+    filter(!is.na(class)) %>% 
+    rbind(missing_order) %>% 
+    mutate(genus = recode(genus, 
+                          "osteichthyes" = "actinopterygii",
+                          "elasmobranchii" = "chondrichthyes"))
+  
+  ##########################Fill nutritional data by species scientific name 
+  #join databases
+  spp_nutrient = left_join(all_spp, afcd_species, by=c("species" = "sciname", "nutrient"))
+  
+  #find NAs
+  missing = spp_nutrient %>% 
+    filter(is.na(value)) %>% 
+    select(-value,-smean, -ssd, -count, -se, -lower_ci, -upper_ci)
+  
+  spp_nutrient = spp_nutrient %>% 
+    filter(!is.na(value)) %>% 
+    mutate(taxa_match = "species")
+  
+  ###############Fill missing with genus #######################
+  #Join datasets 
+  missing = left_join(missing, afcd_genus, by=c("genus", "nutrient"))
+  missing_genus = missing %>% 
+    filter(!is.na(value)) %>% 
+    mutate(taxa_match = "genus")
+  
+  ##include filled values
+  spp_nutrient = rbind(spp_nutrient, missing_genus)
+  
+  ##Seperate remaining missing values
+  missing = missing %>% 
+    filter(is.na(value)) %>% 
+    dplyr::select(-value,-smean, -ssd, -count, -se, -lower_ci, -upper_ci)
+  
+  
+  ###############Fill missing with family #######################
+  
+  #Join datasets
+  missing = left_join(missing, afcd_family, by=c("family", "nutrient"))
+  missing_family = missing %>% 
+    filter(!is.na(value)) %>% 
+    mutate(taxa_match = "family")
+  
+  ##include filled values
+  spp_nutrient = rbind(spp_nutrient, missing_family)
+  
+  ##Seperate remaining missing values
+  missing = missing %>% 
+    filter(is.na(value)) %>% 
+    dplyr::select(-value,-smean, -ssd, -count, -se, -lower_ci, -upper_ci)
+  
+  ##Join for family = genus
+  #Join datasets
+  missing = left_join(missing, afcd_family, by=c("genus" = "family", "nutrient"))
+  missing_family2 = missing %>% 
+    filter(!is.na(value)) %>% 
+    mutate(taxa_match = "family")
+  
+  ##include filled values
+  spp_nutrient = rbind(spp_nutrient, missing_family2)
+  
+  ##Seperate remaining missing values
+  missing = missing %>% 
+    filter(is.na(value)) %>% 
+    dplyr::select(-value,-smean, -ssd, -count, -se, -lower_ci, -upper_ci)
+  
+  ###############Fill missing with order #######################
+  #Join datasets
+  missing = left_join(missing, afcd_order, by=c("order", "nutrient"))
+  missing_order = missing %>% 
+    filter(!is.na(value)) %>% 
+    mutate(taxa_match = "order")
+  
+  ##include filled values
+  spp_nutrient = rbind(spp_nutrient, missing_order)
+  
+  ##Seperate remaining missing values
+  missing = missing %>% 
+    filter(is.na(value)) %>% 
+    dplyr::select(-value,-smean, -ssd, -count, -se, -lower_ci, -upper_ci)
+  
+  ##genus = order
+  #Join datasets
+  missing = left_join(missing, afcd_order, by=c("genus" = "order", "nutrient"))
+  missing_order2 = missing %>% 
+    filter(!is.na(value)) %>% 
+    mutate(taxa_match = "order")
+  
+  ##include filled values
+  spp_nutrient = rbind(spp_nutrient, missing_order2)
+  
+  ##Seperate remaining missing values
+  missing = missing %>% 
+    filter(is.na(value)) %>% 
+    dplyr::select(-value,-smean, -ssd, -count, -se, -lower_ci, -upper_ci)
+  
+  ###############Fill missing with class #######################
+  
+  #Join datasets
+  missing = left_join(missing, afcd_class, by=c("class", "nutrient"))
+  missing_class = missing %>% 
+    filter(!is.na(value)) %>% 
+    mutate(taxa_match = "class")
+  
+  ##include filled values
+  spp_nutrient = rbind(spp_nutrient, missing_class)
+  
+  ##Seperate remaining missing values
+  missing = missing %>% 
+    filter(is.na(value)) %>% 
+    dplyr::select(-value,-smean, -ssd, -count, -se, -lower_ci, -upper_ci)
+  
+  ##Genus = class
+  #Join datasets
+  missing = left_join(missing, afcd_class, by=c("genus" = "class", "nutrient"))
+  missing_class2 = missing %>% 
+    filter(!is.na(value)) %>% 
+    mutate(taxa_match = "class")
+  
+  ##Seperate remaining missing values
+  missing = missing %>% 
+    filter(is.na(value)) %>% 
+    mutate(taxa_match = NA)
+  
+  ##include filled values
+  spp_nutrient = rbind(spp_nutrient, missing_class2, missing) %>%
+    mutate_all(~ifelse(is.nan(.), NA, .)) %>% 
+    left_join(nutrient_key, by = c("nutrient")) %>% 
+    select(species, nutrient, nutrient_units, value, taxa_match, ssd, count, se, lower_ci, upper_ci)
+  
+  return(spp_nutrient)
+  
+}
+#obtain best match raw muscle tissue nutrient information for two specific species 
+sp_extract_sample<-species_nutrients_b(sci_name=c("Panulirus #cygnus","Salmo salar"), prep="raw",part="muscle tissue", nut=c("Iron, total","Zinc"))
+```
+
+Currently this spits out (a lot of!) warnings, but if you look at the returned data frame (e.g., using the print() function), you can see, for me (note this could change if you are using a different database version), the function found 25 species-specific raw muscle tissue samples in AFCD for the Atlantic Salmon, and 4 samples for the rock lobster at the genus level! (It is not surprising that many invertebrate species are lacking data, but as you saw this morning we are working on improving this!).  
+
+```{r}
+#print resulting data frame
+print(sp_extract_sample)
+```
+
+# Exploring AFCD data
+
+Now everyone has access to the data, let's start doing some data explorations and visualizations. 
+
+First, let's explore how many nutrients the data has in total. To do this we will use our "AFCD_nutrients" data frame 
+
+```{r, results="hide"}
+# distinct nutrients
+AFCD_nutrients %>% distinct (nutrient)
+```
+
+You can see this spits out 288 different names! You can find all types of nutrients (e.g., range of different minerals, fatty acids, vitamins, heavy metals, and sometimes the same nutrient just measured in different ways). This is because the database just complies all the information studies provided. 
+
+Next lets explore how many species have species-specifc nutrient information. For that we will use th "AFCD_sci" data frame. 
+
+```{r, results="hide"}
+# distinct species
+AFCD_sci %>% distinct (sciname)
+```
+
+We can see that above 2800 unique species have some level of species-specific data. We can do the same with other variables like body parts 
+```{r}
+# distinct body parts
+AFCD_parts %>% distinct (food_part)
+```
+
+
+As a simple exploration, go ahead an explore sample sizes per food part, per nutrient, and per taxonomic class.You can also explore other factors and metadata (e.g., the range of edible proportions available, the years of the different studies, or the location of studies (currently lead author or FCT)).  
+
+```{r}
+# sample size for distinct food parts
+AFCD_parts %>% ggplot(aes(x=n,y=food_part))+geom_bar(stat="identity")+xlab("Sample size")+ylab("Food part")+theme_classic()
+
+# sample size for distinct phylum with species-specific data
+AFCD_sci  %>% select(value, class)%>%
+  group_by(class) %>%count()%>% arrange(n) %>% ggplot(aes(x=n,y=class))+geom_bar(stat="identity")+xlab("Sample size")+ylab("Class")+theme_classic()
+
+#sample size per nutrient (filtering those that have more than 1500 samples for data visualization purposes)
+AFCD %>% filter(!is.na(nutrient)) %>% select (nutrient,  value) %>%group_by(nutrient) %>%count()%>%arrange(desc(n)) %>% filter (n>1500) %>% ggplot(aes(x=n,y=reorder(nutrient,n)))+geom_bar(stat="identity")+xlab("Sample size")+ylab("Nutrient")+theme_classic()
+
+#edible proportions
+AFCD %>% filter(!is.na(edible_prop)) %>% ggplot(aes(x=edible_prop))+geom_histogram()+xlab("Ediple proportion")+theme_classic()
+
+#location of study
+AFCD %>% filter(!(is.na(country)|country=="Not provided in unformatted AFCD")) %>% group_by(country) %>%count()%>%arrange(desc(n))%>% filter (n>500)%>% ggplot(aes(y=reorder(country,n),x=n))+geom_bar(stat="identity")+xlab("Sample size")+theme_classic()
+
+#year of study
+AFCD_refs %>% filter(!(is.na(study_year)|study_year=="")) %>%  ggplot(aes(x=as.numeric(study_year)))+geom_histogram()+xlab("Year of study")+theme_classic()
+
+
+```
+
+You can also explore patterns between body parts or taxonomic group (e.g., class). I am going to use Iron as an example but feel free to look at other aspects you are interested:
+
+```{r}
+#from the species-specific data, filter iron, make sure value is numeric, and create boxplot that has body part on the x axis and the nutrient value on the y (in log scale to visualize distribution)
+AFCD_sci %>% filter (nutrient=="Iron, total") %>% mutate(value=as.numeric(value)) %>% ggplot(aes(x=food_part,y=log(value)))+geom_boxplot(aes(fill=food_part))+theme(axis.text.x = element_text(angle=90))+xlab("Food part")+ ylab ("log-Iron concentration (mg/100g)")+guides(fill=F)
+
+#from the species-specific data, filter iron and only raw muscle tissue samples, make sure value is numeric, and create boxplot that has class on the x axis and the nutrient value on the y (in log scale to visualize distribution)
+AFCD_sci %>% filter (nutrient=="Iron, total" & food_part=="muscle tissue" & food_prep=="raw") %>% filter(!is.na(class)&!is.na(phylum)) %>% mutate(value=as.numeric(value)) %>% ggplot(aes(x=class,y=log(value)))+geom_boxplot(aes(fill=phylum))+theme(axis.text.x = element_text(angle=90))+xlab("Class")+ ylab ("log-Iron concentration (mg/100g)")
+
+```
+
+While we can definitely see stark differences in these simple explorations which are worth digging further, remember the data has many sources of variation (e.g., food processing), so what you use will depend on your research question or the problem you want to solve.
+
+Now that we know the type of data we have, lets do some simple plots to see trends in nutrients. 
+To not get overwhelmed with all the nutrient names in the database, I am going to create variables that specifically highlight some of the nutrients that are in AFCD and mentioned in the nutrient selection paper we discussed this morning (Zamborain-Mason et al. 2023: A Decision Framework for Selecting Critically Important Nutrients from Aquatic Foods:
+
+
+```{r}
+##List of nutrients in AFCD from nutrient selection paper
+Nutrients_select <- c("Vitamin K-1", "Vitamin E; unknown/variable methods", 	
+               "Vitamin C", "Vitamin B6, total; thru analysis",
+               "Vitamin D; unknown/variable methods","Thiamin",
+               "Vitamin B12", "Vitamin_a_combined", "Valine", "Tryptophan", "Threonine",
+               "Sugars, total","Sodium", "Selenium",  "Total fatty acids, saturated",
+               "Riboflavin", "Proline", "Potassium",
+               "Phosphorus", "Phenylalanine", "Niacin, equivalents", 
+               "Total fatty acids, monounsaturated", "Methionine", "Magnesium", "Lysine",
+               "Zinc","Manganese","Leucine", "Iron, total", "Iodine", "Histisdine",
+               "Glutamine", "Glutamine glutamic acid", "Folate, total",  
+               "Fibre, total; gravimetrically determined", "Copper", "Chromium","Calcium",
+               "Arginine", "Pantothenic acid" , "Total fatty acids, n6 polyunsaturated",
+               "Total fatty acids, n6 polyunsaturated, cis", 
+               "Total fatty acids, n3 polyunsaturated",
+               ##DHA and EPA (marine omega 3s):mentioned
+               "DHA_EPA", "ALA",
+               #protein:total
+               "Protein_total_combined")
+
+```
+
+You can filter the data to only include those nutrients and raw muscle tissue. I am creating a new dataset and calling it "AFCD_selection". Then I am comparing how different phylums rank with respect to each other in terms of concentration per 100g (using median values and comparing with respect to the group with highest value)
+
+```{r}
+#filter the overall data to select nutrients and raw muscle tissue
+AFCD_selection <- AFCD%>% 
+  filter(nutrient %in% Nutrients_select, 
+         food_prep %in% c("raw"),
+         food_part %in% c( "muscle tissue"))
+
+
+#plot relative concentration for each nutrient
+AFCD_selection %>%select(nutrient,phylum,value)%>%filter(!is.na(phylum)) %>%mutate(value=as.numeric(value)) %>%group_by(nutrient,phylum) %>% summarise(median_value=median(value,na.rm=T)) %>% right_join(AFCD_selection %>%select(nutrient,phylum,value)%>%filter(!is.na(phylum)) %>%mutate(value=as.numeric(value)) %>%group_by(nutrient,phylum) %>% summarise(median_value=median(value,na.rm=T))%>%group_by(nutrient)%>%summarise(max_value=max(median_value))) %>% ggplot(aes(y = nutrient, x = phylum, fill = median_value/max_value))+
+  geom_tile(colour = "white", size = 1, height = 1) +
+  #geom_text(aes(label = pct(perc_value))) +
+  #scale_fill_distiller() +
+  scale_x_discrete(expand=c(0,0)) +
+  scale_fill_gradient(low = "white", high = "dodgerblue", breaks = c(0, 0.5, 1), labels = c(0, 0.5, 1), na.value = "grey50") +
+  labs(x = "", y = "", title = "", fill = "Relative\nconcentration") +
+  theme(text = element_text(size = 8, face = "bold"),
+        axis.text.x = element_text(angle = 90),
+        #axis.text.y = element_text(color = col_vec),
+         plot.title = element_text(hjust = 0.5),
+        panel.background = element_rect(fill = 'grey50'),
+        panel.grid = element_blank())
+
+```
+
+In this simple visualization, you can see, based on median nutrient values, which group rank highest for which nutrients. 
+There is much more you can do with this data, depending on your study goal. I hope this brief R workshop just got you excited on the different applications of AFCD and made the data accessible and transparent for you to use in your own research!
+We welcome your feedback and are here to help!
+
+
+
